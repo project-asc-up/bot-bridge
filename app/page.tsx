@@ -34,6 +34,16 @@ export default function HomePage() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
 
+  // Filter States
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [filterAction, setFilterAction] = useState<string>("all");
+  const [filterSource, setFilterSource] = useState<string>("all");
+  const [filterConvoId, setFilterConvoId] = useState<string>("all");
+  const [filterDirection, setFilterDirection] = useState<string>("all");
+  const [filterChatsOnly, setFilterChatsOnly] = useState<boolean>(false);
+  const [filterLatencyOnly, setFilterLatencyOnly] = useState<boolean>(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
   useEffect(() => {
     let active = true;
 
@@ -118,7 +128,7 @@ export default function HomePage() {
         ).toFixed(2)
       : "0.00";
 
-  // Compute Unique Chats
+  // Compute Unique Chats count (from original logs)
   const activeChats = Array.from(
     new Set(
       logs
@@ -126,6 +136,82 @@ export default function HomePage() {
         .filter((id): id is number => typeof id === "number")
     )
   ).length;
+
+  // Compute unique conversation IDs from logs
+  const uniqueConvoIds = Array.from(
+    new Set(
+      logs
+        .map((log) => log.conversationId)
+        .filter((id): id is number => typeof id === "number")
+    )
+  ).sort((a, b) => a - b);
+
+  // Compute Copy Action Handler
+  const handleCopyError = (log: TrafficLog) => {
+    const errorText = `Error Event at ${formatTime(log.timestamp)}
+Direction: ${log.direction}
+Source: ${getSource(log)}
+Content: ${log.content}
+Details: ${log.details || "None"}`;
+    void navigator.clipboard.writeText(errorText).then(() => {
+      setCopiedId(log.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
+  };
+
+  // Filtered Logs
+  const filteredLogs = logs.filter((log) => {
+    // Search query matches content, details, action, direction, source, convo ID
+    if (searchQuery.trim() !== "") {
+      const query = searchQuery.toLowerCase();
+      const contentMatch = log.content?.toLowerCase().includes(query);
+      const detailsMatch = log.details?.toLowerCase().includes(query);
+      const actionMatch = log.action?.toLowerCase().includes(query);
+      const directionMatch = log.direction?.toLowerCase().includes(query);
+      const sourceMatch = getSource(log).toLowerCase().includes(query);
+      const convoMatch = log.conversationId?.toString().includes(query);
+      if (!contentMatch && !detailsMatch && !actionMatch && !directionMatch && !sourceMatch && !convoMatch) {
+        return false;
+      }
+    }
+
+    // Action filter
+    if (filterAction !== "all" && log.action !== filterAction) {
+      return false;
+    }
+
+    // Source filter
+    if (filterSource !== "all" && getSource(log) !== filterSource) {
+      return false;
+    }
+
+    // Conversation ID filter
+    if (filterConvoId !== "all") {
+      if (filterConvoId === "system") {
+        if (log.conversationId !== null) return false;
+      } else {
+        if (log.conversationId?.toString() !== filterConvoId) return false;
+      }
+    }
+
+    // Direction filter
+    if (filterDirection !== "all" && log.direction !== filterDirection) {
+      return false;
+    }
+
+    // Chats only filter
+    if (filterChatsOnly && log.conversationId === null) {
+      return false;
+    }
+
+    // Latency only filter
+    if (filterLatencyOnly && typeof log.latencyMs !== "number") {
+      return false;
+    }
+
+    return true;
+  });
+
   function formatTime(isoString: string): string {
     try {
       const date = new Date(isoString);
@@ -612,6 +698,106 @@ export default function HomePage() {
           border-color: var(--accent);
           color: var(--accent);
         }
+        .stat-card-clickable {
+          cursor: pointer;
+          user-select: none;
+          position: relative;
+        }
+        .stat-card-active-all {
+          border-color: var(--text) !important;
+          box-shadow: 0 0 12px rgba(250, 250, 250, 0.1);
+          background: rgba(250, 250, 250, 0.02) !important;
+        }
+        .stat-card-active-replies {
+          border-color: var(--accent) !important;
+          box-shadow: 0 0 12px rgba(20, 184, 166, 0.15);
+          background: rgba(20, 184, 166, 0.02) !important;
+        }
+        .stat-card-active-latency {
+          border-color: var(--accent-2) !important;
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+          background: rgba(59, 130, 246, 0.02) !important;
+        }
+        .stat-card-active-chats {
+          border-color: #c084fc !important;
+          box-shadow: 0 0 12px rgba(192, 132, 252, 0.15);
+          background: rgba(192, 132, 252, 0.02) !important;
+        }
+        .stat-card-active-handoff {
+          border-color: #f59e0b !important;
+          box-shadow: 0 0 12px rgba(245, 158, 11, 0.15);
+          background: rgba(245, 158, 11, 0.02) !important;
+        }
+        .stat-card-active-errors {
+          border-color: #f87171 !important;
+          box-shadow: 0 0 12px rgba(248, 113, 113, 0.15);
+          background: rgba(248, 113, 113, 0.02) !important;
+        }
+        .filter-bar {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 12px;
+          margin-top: 16px;
+          margin-bottom: 8px;
+          padding: 16px;
+          background: rgba(11, 24, 39, 0.25);
+          border: 1px solid var(--card-border);
+          border-radius: 12px;
+        }
+        .filter-group {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .filter-label {
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: var(--muted);
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+        .filter-input, .filter-select {
+          background: #09090b;
+          border: 1px solid var(--card-border);
+          color: var(--text);
+          padding: 8px 12px;
+          border-radius: 8px;
+          font-size: 0.85rem;
+          outline: none;
+          transition: border-color 0.2s ease;
+          width: 100%;
+        }
+        .filter-input::placeholder {
+          color: #71717a;
+        }
+        .filter-input:focus, .filter-select:focus {
+          border-color: var(--accent);
+        }
+        .btn-clear-filters {
+          align-self: flex-end;
+          height: 38px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .btn-copy-error {
+          background: rgba(239, 68, 68, 0.12);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          color: #f87171;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 0.7rem;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.2s ease;
+          margin-left: 8px;
+          white-space: nowrap;
+        }
+        .btn-copy-error:hover {
+          background: rgba(239, 68, 68, 0.25);
+          border-color: #f87171;
+          color: #ffffff;
+        }
       ` }} />
 
       <section className="hero">
@@ -663,35 +849,113 @@ export default function HomePage() {
 
       {/* Statistics Cards */}
       <div className="stats-grid">
-        <div className="stat-card">
+        <div
+          className={`stat-card stat-card-clickable ${
+            filterAction === "all" && !filterChatsOnly && !filterLatencyOnly ? "stat-card-active-all" : ""
+          }`}
+          onClick={() => {
+            setFilterAction("all");
+            setFilterSource("all");
+            setFilterConvoId("all");
+            setFilterDirection("all");
+            setSearchQuery("");
+            setFilterChatsOnly(false);
+            setFilterLatencyOnly(false);
+          }}
+        >
           <div className="stat-label">Total Events</div>
           <div className="stat-value">{stats.total}</div>
         </div>
-        <div className="stat-card">
+        <div
+          className={`stat-card stat-card-clickable ${
+            filterAction === "dify_reply" ? "stat-card-active-replies" : ""
+          }`}
+          onClick={() => {
+            setFilterAction("dify_reply");
+            setFilterSource("all");
+            setFilterConvoId("all");
+            setFilterDirection("all");
+            setSearchQuery("");
+            setFilterChatsOnly(false);
+            setFilterLatencyOnly(false);
+          }}
+        >
           <div className="stat-label">AI Replies</div>
           <div className="stat-value" style={{ color: "var(--accent)" }}>
             {stats.replies}
           </div>
         </div>
-        <div className="stat-card">
+        <div
+          className={`stat-card stat-card-clickable ${
+            filterLatencyOnly ? "stat-card-active-latency" : ""
+          }`}
+          onClick={() => {
+            setFilterLatencyOnly(true);
+            setFilterAction("all");
+            setFilterSource("all");
+            setFilterConvoId("all");
+            setFilterDirection("all");
+            setSearchQuery("");
+            setFilterChatsOnly(false);
+          }}
+        >
           <div className="stat-label">Avg Latency</div>
           <div className="stat-value" style={{ color: "var(--accent-2)" }}>
             {avgLatency}s
           </div>
         </div>
-        <div className="stat-card">
+        <div
+          className={`stat-card stat-card-clickable ${
+            filterChatsOnly ? "stat-card-active-chats" : ""
+          }`}
+          onClick={() => {
+            setFilterChatsOnly(true);
+            setFilterAction("all");
+            setFilterSource("all");
+            setFilterConvoId("all");
+            setFilterDirection("all");
+            setSearchQuery("");
+            setFilterLatencyOnly(false);
+          }}
+        >
           <div className="stat-label">Active Chats</div>
           <div className="stat-value" style={{ color: "#c084fc" }}>
             {activeChats}
           </div>
         </div>
-        <div className="stat-card">
+        <div
+          className={`stat-card stat-card-clickable ${
+            filterAction === "handoff" ? "stat-card-active-handoff" : ""
+          }`}
+          onClick={() => {
+            setFilterAction("handoff");
+            setFilterSource("all");
+            setFilterConvoId("all");
+            setFilterDirection("all");
+            setSearchQuery("");
+            setFilterChatsOnly(false);
+            setFilterLatencyOnly(false);
+          }}
+        >
           <div className="stat-label">Handoffs</div>
           <div className="stat-value" style={{ color: "#f59e0b" }}>
             {stats.handoffs}
           </div>
         </div>
-        <div className="stat-card">
+        <div
+          className={`stat-card stat-card-clickable ${
+            filterAction === "error" ? "stat-card-active-errors" : ""
+          }`}
+          onClick={() => {
+            setFilterAction("error");
+            setFilterSource("all");
+            setFilterConvoId("all");
+            setFilterDirection("all");
+            setSearchQuery("");
+            setFilterChatsOnly(false);
+            setFilterLatencyOnly(false);
+          }}
+        >
           <div className="stat-label">Errors</div>
           <div className="stat-value" style={{ color: "#f87171" }}>
             {stats.errors}
@@ -727,6 +991,106 @@ export default function HomePage() {
             </div>
           </div>
 
+          {/* Dynamic Filter Bar */}
+          <div className="filter-bar">
+            <div className="filter-group">
+              <span className="filter-label">Search Text</span>
+              <input
+                type="text"
+                className="filter-input"
+                placeholder="Search msg/details..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            
+            <div className="filter-group">
+              <span className="filter-label">Conv ID</span>
+              <select
+                className="filter-select"
+                value={filterConvoId}
+                onChange={(e) => {
+                  setFilterConvoId(e.target.value);
+                  setFilterChatsOnly(false);
+                }}
+              >
+                <option value="all">All Conversations</option>
+                <option value="system">System (No ID)</option>
+                {uniqueConvoIds.map((id) => (
+                  <option key={id} value={id.toString()}>
+                    Convo #{id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <span className="filter-label">Action</span>
+              <select
+                className="filter-select"
+                value={filterAction}
+                onChange={(e) => {
+                  setFilterAction(e.target.value);
+                  setFilterChatsOnly(false);
+                  setFilterLatencyOnly(false);
+                }}
+              >
+                <option value="all">All Actions</option>
+                <option value="received">received</option>
+                <option value="ignored">ignored</option>
+                <option value="dify_reply">dify_reply</option>
+                <option value="handoff">handoff</option>
+                <option value="error">error</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <span className="filter-label">Source</span>
+              <select
+                className="filter-select"
+                value={filterSource}
+                onChange={(e) => setFilterSource(e.target.value)}
+              >
+                <option value="all">All Sources</option>
+                <option value="Evolution (Whatsapp)">Evolution (Whatsapp)</option>
+                <option value="Dify">Dify</option>
+                <option value="Chatwoot">Chatwoot</option>
+                <option value="Bridge">Bridge</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <span className="filter-label">Direction</span>
+              <select
+                className="filter-select"
+                value={filterDirection}
+                onChange={(e) => setFilterDirection(e.target.value)}
+              >
+                <option value="all">All Directions</option>
+                <option value="incoming">incoming</option>
+                <option value="outgoing">outgoing</option>
+                <option value="system">system</option>
+              </select>
+            </div>
+
+            {(searchQuery || filterAction !== "all" || filterSource !== "all" || filterConvoId !== "all" || filterDirection !== "all" || filterChatsOnly || filterLatencyOnly) && (
+              <button
+                className="btn btn-clear-filters"
+                onClick={() => {
+                  setSearchQuery("");
+                  setFilterAction("all");
+                  setFilterSource("all");
+                  setFilterConvoId("all");
+                  setFilterDirection("all");
+                  setFilterChatsOnly(false);
+                  setFilterLatencyOnly(false);
+                }}
+              >
+                Clear Filters
+              </button>
+            )}
+          </div>
+
           <div className="traffic-table-container">
             {logs.length === 0 ? (
               <div className="empty-state">
@@ -734,6 +1098,28 @@ export default function HomePage() {
                 <p style={{ fontSize: "0.8rem", marginTop: "4px" }}>
                   Send a message to your WhatsApp number to trigger events.
                 </p>
+              </div>
+            ) : filteredLogs.length === 0 ? (
+              <div className="empty-state">
+                <p>No traffic events match your active filters.</p>
+                <p style={{ fontSize: "0.8rem", marginTop: "4px" }}>
+                  Try resetting the filters or typing a different search query.
+                </p>
+                <button
+                  className="btn"
+                  style={{ marginTop: "12px" }}
+                  onClick={() => {
+                    setSearchQuery("");
+                    setFilterAction("all");
+                    setFilterSource("all");
+                    setFilterConvoId("all");
+                    setFilterDirection("all");
+                    setFilterChatsOnly(false);
+                    setFilterLatencyOnly(false);
+                  }}
+                >
+                  Reset Filters
+                </button>
               </div>
             ) : (
               <table className="traffic-table">
@@ -749,7 +1135,7 @@ export default function HomePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map((log) => (
+                  {filteredLogs.map((log) => (
                     <tr key={log.id}>
                       <td style={{ fontWeight: 600 }}>{formatTime(log.timestamp)}</td>
                       <td>
@@ -790,7 +1176,18 @@ export default function HomePage() {
                         </div>
                       </td>
                       <td>
-                        <span className={getBadgeClass(log.action)}>{log.action}</span>
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                          <span className={getBadgeClass(log.action)}>{log.action}</span>
+                          {log.action === "error" && (
+                            <button
+                              className="btn-copy-error"
+                              onClick={() => handleCopyError(log)}
+                              title="Copy error details to clipboard"
+                            >
+                              {copiedId === log.id ? "✓ Copied!" : "📋 Copy"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="details-cell" title={log.details}>
                         {log.details}
