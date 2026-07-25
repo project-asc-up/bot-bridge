@@ -307,14 +307,6 @@ export async function POST(request: Request) {
     (messageType === null || messageType.toLowerCase() === "incoming");
 
   if (!shouldHandleChatwootWebhook) {
-    addTrafficLog({
-      accountId: readAccountId(payload),
-      conversationId: readConversationId(payload),
-      direction: messageType === "outgoing" ? "outgoing" : "system",
-      content: content || `Event: ${event || "unknown"}`,
-      action: "ignored",
-      details: `Ignored event: ${event || "none"}, message type: ${messageType || "none"}`
-    });
     return Response.json({ ok: true, ignored: true });
   }
 
