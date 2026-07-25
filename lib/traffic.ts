@@ -7,6 +7,7 @@ export type TrafficLog = {
   content: string;
   action: "received" | "ignored" | "dify_reply" | "handoff" | "error";
   details?: string;
+  latencyMs?: number;
 };
 
 const MAX_LOGS = 100;

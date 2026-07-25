@@ -11,6 +11,7 @@ type TrafficLog = {
   content: string;
   action: "received" | "ignored" | "dify_reply" | "handoff" | "error";
   details?: string;
+  latencyMs?: number;
 };
 
 type HealthStatus = {
@@ -31,6 +32,7 @@ export default function HomePage() {
   const [isPolling, setIsPolling] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -105,6 +107,25 @@ export default function HomePage() {
     { total: 0, replies: 0, handoffs: 0, ignored: 0, errors: 0 }
   );
 
+  // Compute Latency
+  const latencyLogs = logs.filter((log) => typeof log.latencyMs === "number");
+  const avgLatency =
+    latencyLogs.length > 0
+      ? (
+          latencyLogs.reduce((sum, log) => sum + (log.latencyMs ?? 0), 0) /
+          latencyLogs.length /
+          1000
+        ).toFixed(2)
+      : "0.00";
+
+  // Compute Unique Chats
+  const activeChats = Array.from(
+    new Set(
+      logs
+        .map((log) => log.conversationId)
+        .filter((id): id is number => typeof id === "number")
+    )
+  ).length;
   function formatTime(isoString: string): string {
     try {
       const date = new Date(isoString);
@@ -131,6 +152,37 @@ export default function HomePage() {
     }
   }
 
+  function getSource(log: TrafficLog): string {
+    if (log.direction === "incoming") {
+      return "Evolution (Whatsapp)";
+    }
+    if (log.direction === "outgoing") {
+      if (log.action === "dify_reply") {
+        return "Dify";
+      }
+      return "Chatwoot";
+    }
+    if (log.direction === "system") {
+      if (log.action === "handoff") {
+        return "Dify";
+      }
+      return "Bridge";
+    }
+    return "System";
+  }
+
+  function getSourceBadgeClass(source: string): string {
+    switch (source) {
+      case "Evolution (Whatsapp)":
+        return "badge badge-source-whatsapp";
+      case "Dify":
+        return "badge badge-source-dify";
+      case "Chatwoot":
+        return "badge badge-source-chatwoot";
+      default:
+        return "badge badge-source-bridge";
+    }
+  }
   return (
     <main className="shell">
       <style dangerouslySetInnerHTML={{ __html: `
@@ -157,23 +209,6 @@ export default function HomePage() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-        }
-        .status-label-text {
-          font-size: 0.85rem;
-          font-weight: 700;
-          color: var(--text);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-        .status-indicator-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 0.72rem;
-          font-weight: 700;
-          padding: 2px 8px;
-          border-radius: 6px;
-          letter-spacing: 0.02em;
         }
         .status-dot {
           width: 6px;
@@ -222,7 +257,7 @@ export default function HomePage() {
         }
         .stats-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
           gap: 16px;
           margin-top: 24px;
         }
@@ -239,7 +274,7 @@ export default function HomePage() {
           border-color: rgba(94, 234, 212, 0.3);
         }
         .stat-value {
-          font-size: 2.2rem;
+          font-size: 2rem;
           font-weight: 800;
           color: var(--text);
           margin-top: 6px;
@@ -251,6 +286,157 @@ export default function HomePage() {
           text-transform: uppercase;
           letter-spacing: 0.12em;
           font-weight: 600;
+        }
+        .dashboard-layout {
+          display: flex;
+          gap: 24px;
+          margin-top: 24px;
+          align-items: flex-start;
+          width: 100%;
+        }
+        .panel {
+          flex: 1;
+          transition: all 0.3s ease;
+        }
+        .panel-split {
+          flex: 1.25;
+          max-width: 65%;
+        }
+        .chat-viewer-panel {
+          flex: 0.75;
+          max-width: 35%;
+          position: sticky;
+          top: 24px;
+          display: flex;
+          flex-direction: column;
+          background: rgba(11, 24, 39, 0.6);
+          border: 1px solid var(--card-border);
+          border-radius: 24px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+          overflow: hidden;
+        }
+        .chat-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 20px;
+          border-bottom: 1px solid var(--card-border);
+          background: rgba(15, 32, 53, 0.4);
+        }
+        .chat-header-title {
+          font-size: 0.95rem;
+          font-weight: 700;
+          color: var(--text);
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .chat-body-scroll {
+          flex: 1;
+          overflow-y: auto;
+          padding: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          max-height: 520px;
+          min-height: 350px;
+          scrollbar-width: thin;
+        }
+        .chat-bubble-row {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+        }
+        .chat-bubble-incoming {
+          align-items: flex-start;
+        }
+        .chat-bubble-outgoing {
+          align-items: flex-end;
+        }
+        .chat-bubble-system {
+          align-items: center;
+        }
+        .bubble {
+          max-width: 85%;
+          padding: 10px 14px;
+          border-radius: 14px;
+          font-size: 0.85rem;
+          line-height: 1.4;
+          word-break: break-word;
+        }
+        .bubble-incoming {
+          background: rgba(148, 163, 184, 0.1);
+          color: var(--text);
+          border-bottom-left-radius: 4px;
+          border: 1px solid rgba(148, 163, 184, 0.15);
+        }
+        .bubble-outgoing {
+          background: linear-gradient(135deg, rgba(20, 184, 166, 0.15), rgba(94, 234, 212, 0.05));
+          color: var(--accent);
+          border-bottom-right-radius: 4px;
+          border: 1px solid rgba(94, 234, 212, 0.25);
+          box-shadow: 0 4px 12px rgba(20, 184, 166, 0.05);
+        }
+        .bubble-system {
+          background: rgba(192, 132, 252, 0.08);
+          color: #c084fc;
+          border: 1px solid rgba(192, 132, 252, 0.2);
+          font-size: 0.78rem;
+          padding: 6px 12px;
+          border-radius: 10px;
+          text-align: center;
+        }
+        .bubble-meta {
+          font-size: 0.68rem;
+          color: var(--muted);
+          margin-top: 4px;
+          display: flex;
+          gap: 6px;
+        }
+        .chat-bubble-outgoing .bubble-meta {
+          justify-content: flex-end;
+        }
+        .btn-chat-link {
+          background: rgba(94, 234, 212, 0.05);
+          border: 1px solid rgba(94, 234, 212, 0.15);
+          color: var(--accent);
+          padding: 4px 10px;
+          border-radius: 6px;
+          font-size: 0.78rem;
+          font-family: monospace;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.2s ease;
+        }
+        .btn-chat-link:hover {
+          background: rgba(94, 234, 212, 0.12);
+          border-color: var(--accent);
+          color: var(--text);
+        }
+        .btn-chat-link-active {
+          background: var(--accent);
+          border-color: var(--accent);
+          color: #0b1827;
+        }
+        .badge-source-whatsapp {
+          background: rgba(37, 211, 102, 0.1) !important;
+          color: #25d366 !important;
+          border: 1px solid rgba(37, 211, 102, 0.2) !important;
+        }
+        .badge-source-dify {
+          background: rgba(99, 102, 241, 0.1) !important;
+          color: #818cf8 !important;
+          border: 1px solid rgba(99, 102, 241, 0.2) !important;
+        }
+        .badge-source-chatwoot {
+          background: rgba(59, 130, 246, 0.15) !important;
+          color: #60a5fa !important;
+          border: 1px solid rgba(59, 130, 246, 0.3) !important;
+        }
+        .badge-source-bridge {
+          background: rgba(148, 163, 184, 0.1) !important;
+          color: var(--muted) !important;
+          border: 1px solid rgba(148, 163, 184, 0.15) !important;
         }
         .monitor-header {
           display: flex;
@@ -372,7 +558,7 @@ export default function HomePage() {
           color: #c084fc;
         }
         .msg-cell {
-          max-width: 250px;
+          max-width: 180px;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -380,6 +566,10 @@ export default function HomePage() {
         .details-cell {
           color: var(--muted);
           font-size: 0.85rem;
+          max-width: 180px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .empty-state {
           text-align: center;
@@ -484,6 +674,18 @@ export default function HomePage() {
           </div>
         </div>
         <div className="stat-card">
+          <div className="stat-label">Avg Latency</div>
+          <div className="stat-value" style={{ color: "var(--accent-2)" }}>
+            {avgLatency}s
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Active Chats</div>
+          <div className="stat-value" style={{ color: "#c084fc" }}>
+            {activeChats}
+          </div>
+        </div>
+        <div className="stat-card">
           <div className="stat-label">Handoffs</div>
           <div className="stat-value" style={{ color: "#f59e0b" }}>
             {stats.handoffs}
@@ -497,88 +699,171 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Live Monitor Panel */}
-      <section className="panel">
-        <div className="monitor-header">
-          <div className="pulse-indicator">
-            <div className={isPolling ? "pulse-dot" : ""} style={{ backgroundColor: isPolling ? "var(--accent)" : "var(--muted)" }} />
-            <span>{isPolling ? "LIVE TRAFFIC MONITOR" : "TRAFFIC MONITOR PAUSED"}</span>
-          </div>
-          <div className="actions-bar">
-            <button
-              className={`btn ${isPolling ? "btn-active" : ""}`}
-              onClick={() => setIsPolling(true)}
-            >
-              Stream
-            </button>
-            <button
-              className={`btn ${!isPolling ? "btn-active" : ""}`}
-              onClick={() => setIsPolling(false)}
-            >
-              Pause
-            </button>
-            <button className="btn" onClick={() => setLogs([])}>
-              Clear View
-            </button>
-          </div>
-        </div>
-
-        <div className="traffic-table-container">
-          {logs.length === 0 ? (
-            <div className="empty-state">
-              <p>No traffic events logged yet.</p>
-              <p style={{ fontSize: "0.8rem", marginTop: "4px" }}>
-                Send a message to your WhatsApp number to trigger events.
-              </p>
+      {/* Main Content Dashboard Layout */}
+      <div className="dashboard-layout">
+        {/* Live Monitor Panel (Left side, maps to split panel if active chat is viewed) */}
+        <section className={`panel ${selectedConversationId ? "panel-split" : ""}`}>
+          <div className="monitor-header">
+            <div className="pulse-indicator">
+              <div className={isPolling ? "pulse-dot" : ""} style={{ backgroundColor: isPolling ? "var(--accent)" : "var(--muted)" }} />
+              <span>{isPolling ? "LIVE TRAFFIC MONITOR" : "TRAFFIC MONITOR PAUSED"}</span>
             </div>
-          ) : (
-            <table className="traffic-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Conv ID</th>
-                  <th>Dir</th>
-                  <th>Message</th>
-                  <th>Action</th>
-                  <th>Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log) => (
-                  <tr key={log.id}>
-                    <td style={{ fontWeight: 600 }}>{formatTime(log.timestamp)}</td>
-                    <td style={{ fontFamily: "monospace", color: "var(--muted)" }}>
-                      {log.conversationId ? `#${log.conversationId}` : "System"}
-                    </td>
-                    <td>
-                      <span
-                        className={`direction-tag ${
-                          log.direction === "incoming"
-                            ? "direction-incoming"
-                            : log.direction === "outgoing"
-                            ? "direction-outgoing"
-                            : "direction-system"
+            <div className="actions-bar">
+              <button
+                className={`btn ${isPolling ? "btn-active" : ""}`}
+                onClick={() => setIsPolling(true)}
+              >
+                Stream
+              </button>
+              <button
+                className={`btn ${!isPolling ? "btn-active" : ""}`}
+                onClick={() => setIsPolling(false)}
+              >
+                Pause
+              </button>
+              <button className="btn" onClick={() => { setLogs([]); setSelectedConversationId(null); }}>
+                Clear View
+              </button>
+            </div>
+          </div>
+
+          <div className="traffic-table-container">
+            {logs.length === 0 ? (
+              <div className="empty-state">
+                <p>No traffic events logged yet.</p>
+                <p style={{ fontSize: "0.8rem", marginTop: "4px" }}>
+                  Send a message to your WhatsApp number to trigger events.
+                </p>
+              </div>
+            ) : (
+              <table className="traffic-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Conv ID</th>
+                    <th>Source</th>
+                    <th>Dir</th>
+                    <th>Message</th>
+                    <th>Action</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log) => (
+                    <tr key={log.id}>
+                      <td style={{ fontWeight: 600 }}>{formatTime(log.timestamp)}</td>
+                      <td>
+                        {log.conversationId ? (
+                          <button
+                            className={`btn-chat-link ${
+                              selectedConversationId === log.conversationId ? "btn-chat-link-active" : ""
+                            }`}
+                            onClick={() => setSelectedConversationId(log.conversationId)}
+                          >
+                            #{log.conversationId}
+                          </button>
+                        ) : (
+                          <span style={{ color: "var(--muted)" }}>System</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={getSourceBadgeClass(getSource(log))}>
+                          {getSource(log)}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={`direction-tag ${
+                            log.direction === "incoming"
+                              ? "direction-incoming"
+                              : log.direction === "outgoing"
+                              ? "direction-outgoing"
+                              : "direction-system"
+                          }`}
+                        >
+                          {log.direction}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="msg-cell" title={log.content}>
+                          {log.content}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={getBadgeClass(log.action)}>{log.action}</span>
+                      </td>
+                      <td className="details-cell" title={log.details}>
+                        {log.details}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
+
+        {/* Chat Thread Viewer Panel (Right side, appears when a chat ID is clicked) */}
+        {selectedConversationId && (
+          <section className="panel chat-viewer-panel">
+            <div className="chat-header">
+              <div className="chat-header-title">
+                <span style={{ fontSize: "1.1rem" }}>💬</span>
+                <span>Conversation #{selectedConversationId}</span>
+              </div>
+              <button className="btn" onClick={() => setSelectedConversationId(null)}>
+                Close
+              </button>
+            </div>
+            <div className="chat-body-scroll">
+              {logs.filter((log) => log.conversationId === selectedConversationId).length === 0 ? (
+                <div className="chat-empty">
+                  <p>No messages found in history for this chat.</p>
+                </div>
+              ) : (
+                logs
+                  .filter((log) => log.conversationId === selectedConversationId)
+                  .slice()
+                  .reverse() // Sort chronologically (oldest message first)
+                  .map((log) => {
+                    const isIncoming = log.direction === "incoming";
+                    const isSystem = log.direction === "system";
+                    return (
+                      <div
+                        key={log.id}
+                        className={`chat-bubble-row ${
+                          isSystem
+                            ? "chat-bubble-system"
+                            : isIncoming
+                            ? "chat-bubble-incoming"
+                            : "chat-bubble-outgoing"
                         }`}
                       >
-                        {log.direction}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="msg-cell" title={log.content}>
-                        {log.content}
+                        <div
+                          className={`bubble ${
+                            isSystem
+                              ? "bubble-system"
+                              : isIncoming
+                              ? "bubble-incoming"
+                              : "bubble-outgoing"
+                          }`}
+                        >
+                          {log.content}
+                        </div>
+                        {!isSystem && (
+                          <div className="bubble-meta">
+                            <span>{formatTime(log.timestamp)}</span>
+                            {log.latencyMs && <span>({(log.latencyMs / 1000).toFixed(2)}s)</span>}
+                          </div>
+                        )}
                       </div>
-                    </td>
-                    <td>
-                      <span className={getBadgeClass(log.action)}>{log.action}</span>
-                    </td>
-                    <td className="details-cell">{log.details}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
+                    );
+                  })
+              )}
+            </div>
+          </section>
+        )}
+      </div>
     </main>
   );
 }

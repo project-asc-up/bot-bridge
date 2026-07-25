@@ -179,6 +179,7 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
       ? storedDifyConversationId
       : null;
 
+  const startTime = Date.now();
   let difyReply;
   try {
     difyReply = await sendDifyMessage({
@@ -203,6 +204,8 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
     });
     return;
   }
+
+  const latencyMs = Date.now() - startTime;
 
   const answer = difyReply.answer?.trim();
   if (!answer) {
@@ -231,7 +234,8 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
       direction: "system",
       content: answer,
       action: "handoff",
-      details: "Handoff keyword matched. Status updated to open."
+      details: "Handoff keyword matched. Status updated to open.",
+      latencyMs
     });
     await updateConversationStatus({
       accountId,
@@ -253,7 +257,8 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
     direction: "outgoing",
     content: answer,
     action: "dify_reply",
-    details: `Successfully sent AI reply to Chatwoot (dify_id: ${difyReply.conversation_id || "none"})`
+    details: `Successfully sent AI reply to Chatwoot (dify_id: ${difyReply.conversation_id || "none"})`,
+    latencyMs
   });
 
   if (difyReply.conversation_id && difyReply.conversation_id !== difyConversationId) {
@@ -301,10 +306,20 @@ export async function POST(request: Request) {
   const messageType = readMessageType(payload);
   const content = readContent(payload);
 
+  const senderType = payload.sender && typeof payload.sender === "object" && "type" in payload.sender
+    ? (payload.sender as { type?: string }).type
+    : null;
+
+  const isOutgoingFromHuman =
+    event === "message_created" &&
+    messageType?.toLowerCase() === "outgoing" &&
+    senderType === "user";
+
   const shouldHandleChatwootWebhook =
-    (event === "message_created" || event === "message_create" || event === null) &&
-    content !== null &&
-    (messageType === null || messageType.toLowerCase() === "incoming");
+    ((event === "message_created" || event === "message_create" || event === null) &&
+      content !== null &&
+      (messageType === null || messageType.toLowerCase() === "incoming")) ||
+    isOutgoingFromHuman;
 
   if (!shouldHandleChatwootWebhook) {
     return Response.json({ ok: true, ignored: true });
