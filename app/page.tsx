@@ -13,10 +13,24 @@ type TrafficLog = {
   details?: string;
 };
 
+type HealthStatus = {
+  connected: boolean;
+  baseUrl: string;
+  accountId?: number | null;
+  error?: string | null;
+};
+
+type SystemHealth = {
+  ok: boolean;
+  dify: HealthStatus;
+  chatwoot: HealthStatus;
+};
+
 export default function HomePage() {
   const [logs, setLogs] = useState<TrafficLog[]>([]);
   const [isPolling, setIsPolling] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -40,17 +54,41 @@ export default function HomePage() {
       }
     }
 
-    void fetchTraffic();
+    async function fetchHealth() {
+      try {
+        const response = await fetch("/api/health");
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = (await response.json()) as SystemHealth;
+        if (active) {
+          setHealth(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch health status:", err);
+      }
+    }
 
-    const interval = setInterval(() => {
+    // Initial fetch
+    void fetchTraffic();
+    void fetchHealth();
+
+    // Set up webhook traffic polling
+    const trafficInterval = setInterval(() => {
       if (isPolling) {
         void fetchTraffic();
       }
     }, 2000);
 
+    // Set up health probe checking (longer interval to prevent overloading)
+    const healthInterval = setInterval(() => {
+      void fetchHealth();
+    }, 10000);
+
     return () => {
       active = false;
-      clearInterval(interval);
+      clearInterval(trafficInterval);
+      clearInterval(healthInterval);
     };
   }, [isPolling]);
 
@@ -95,7 +133,93 @@ export default function HomePage() {
 
   return (
     <main className="shell">
-      <style jsx global>{`
+      <style dangerouslySetInnerHTML={{ __html: `
+        .status-container {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          gap: 16px;
+          margin-top: 24px;
+        }
+        .status-card-info {
+          padding: 16px 20px;
+          border-radius: 16px;
+          background: rgba(11, 24, 39, 0.4);
+          border: 1px solid var(--card-border);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          transition: transform 0.2s ease;
+        }
+        .status-card-info:hover {
+          transform: translateY(-1px);
+        }
+        .status-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .status-label-text {
+          font-size: 0.85rem;
+          font-weight: 700;
+          color: var(--text);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .status-indicator-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.72rem;
+          font-weight: 700;
+          padding: 2px 8px;
+          border-radius: 6px;
+          letter-spacing: 0.02em;
+        }
+        .status-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+        }
+        .status-online {
+          border-color: rgba(94, 234, 212, 0.2);
+        }
+        .status-online .status-indicator-badge {
+          background: rgba(94, 234, 212, 0.1);
+          color: var(--accent);
+          border: 1px solid rgba(94, 234, 212, 0.3);
+        }
+        .status-online .status-dot {
+          background: var(--accent);
+          box-shadow: 0 0 8px var(--accent);
+        }
+        .status-offline {
+          border-color: rgba(239, 68, 68, 0.2);
+          background: rgba(239, 68, 68, 0.02);
+        }
+        .status-offline .status-indicator-badge {
+          background: rgba(239, 68, 68, 0.1);
+          color: #f87171;
+          border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .status-offline .status-dot {
+          background: #ef4444;
+          box-shadow: 0 0 8px #ef4444;
+        }
+        .status-detail {
+          font-size: 0.78rem;
+          color: var(--muted);
+          font-family: monospace;
+          word-break: break-all;
+        }
+        .status-error-msg {
+          font-size: 0.75rem;
+          color: #f87171;
+          background: rgba(239, 68, 68, 0.05);
+          padding: 6px 10px;
+          border-radius: 8px;
+          margin-top: 4px;
+          border: 1px solid rgba(239, 68, 68, 0.15);
+        }
         .stats-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -298,7 +422,7 @@ export default function HomePage() {
           border-color: var(--accent);
           color: var(--accent);
         }
-      `}</style>
+      ` }} />
 
       <section className="hero">
         <p className="eyebrow">Project Kganya Stack</p>
@@ -308,6 +432,37 @@ export default function HomePage() {
           Use this panel to monitor active conversations, AI routing, automated replies, and agent handoffs.
         </p>
       </section>
+
+      {/* System Status Indicators */}
+      {health && (
+        <div className="status-container">
+          <div className={`status-card-info ${health.dify.connected ? "status-online" : "status-offline"}`}>
+            <div className="status-row">
+              <span className="status-label-text">Dify Engine</span>
+              <span className="status-indicator-badge">
+                <span className="status-dot" />
+                {health.dify.connected ? "ONLINE" : "OFFLINE"}
+              </span>
+            </div>
+            <div className="status-detail">{health.dify.baseUrl}</div>
+            {health.dify.error && <div className="status-error-msg">{health.dify.error}</div>}
+          </div>
+
+          <div className={`status-card-info ${health.chatwoot.connected ? "status-online" : "status-offline"}`}>
+            <div className="status-row">
+              <span className="status-label-text">Chatwoot API</span>
+              <span className="status-indicator-badge">
+                <span className="status-dot" />
+                {health.chatwoot.connected ? "ONLINE" : "OFFLINE"}
+              </span>
+            </div>
+            <div className="status-detail">
+              {health.chatwoot.baseUrl} (Acc: #{health.chatwoot.accountId})
+            </div>
+            {health.chatwoot.error && <div className="status-error-msg">{health.chatwoot.error}</div>}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="error-banner">
