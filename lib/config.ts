@@ -14,6 +14,7 @@ export const config = {
   chatwootAccountId: process.env.CHATWOOT_ACCOUNT_ID ? Number(process.env.CHATWOOT_ACCOUNT_ID) : null,
   chatwootConversationStateKey: process.env.CHATWOOT_CONVERSATION_STATE_KEY ?? "dify_conversation_id",
   difyInputsJson: process.env.DIFY_INPUTS_JSON ?? "",
+  difyModel: process.env.DIFY_MODEL ?? "Dify Agent",
   webhookMaxAgeSeconds: Number(process.env.CHATWOOT_WEBHOOK_MAX_AGE_SECONDS ?? "300"),
 } as const;
 

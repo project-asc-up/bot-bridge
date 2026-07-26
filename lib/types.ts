@@ -22,4 +22,16 @@ export type DifyChatMessageResponse = {
   task_id?: string;
   event?: string;
   mode?: string;
+  metadata?: {
+    usage?: {
+      prompt_tokens?: number;
+      prompt_unit_price?: string;
+      prompt_price_unit?: string;
+      completion_tokens?: number;
+      completion_unit_price?: string;
+      completion_price_unit?: string;
+      total_tokens?: number;
+      total_price?: string;
+    };
+  };
 };

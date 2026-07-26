@@ -235,7 +235,10 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
       content: answer,
       action: "handoff",
       details: "Handoff keyword matched. Status updated to open.",
-      latencyMs
+      latencyMs,
+      tokens: difyReply.metadata?.usage?.total_tokens,
+      model: config.difyModel,
+      cost: difyReply.metadata?.usage?.total_price ? parseFloat(difyReply.metadata.usage.total_price) : undefined,
     });
     await updateConversationStatus({
       accountId,
@@ -258,7 +261,10 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
     content: answer,
     action: "dify_reply",
     details: `Successfully sent AI reply to Chatwoot (dify_id: ${difyReply.conversation_id || "none"})`,
-    latencyMs
+    latencyMs,
+    tokens: difyReply.metadata?.usage?.total_tokens,
+    model: config.difyModel,
+    cost: difyReply.metadata?.usage?.total_price ? parseFloat(difyReply.metadata.usage.total_price) : undefined,
   });
 
   if (difyReply.conversation_id && difyReply.conversation_id !== difyConversationId) {

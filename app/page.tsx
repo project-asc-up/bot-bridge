@@ -12,6 +12,9 @@ type TrafficLog = {
   action: "received" | "ignored" | "sent" | "dify_reply" | "handoff" | "error";
   details?: string;
   latencyMs?: number;
+  tokens?: number;
+  model?: string;
+  cost?: number;
 };
 
 type HealthStatus = {
@@ -152,6 +155,9 @@ export default function HomePage() {
 Direction: ${log.direction}
 Source: ${getSource(log)}
 Destination: ${getDestination(log)}
+Model: ${log.model || "N/A"}
+Tokens: ${log.tokens || "N/A"}
+Cost: ${log.cost !== undefined ? `$${log.cost.toFixed(6)}` : "N/A"}
 Content: ${log.content}
 Details: ${log.details || "None"}`;
     void navigator.clipboard.writeText(errorText).then(() => {
@@ -298,6 +304,16 @@ Details: ${log.details || "None"}`;
 
   function getDestinationBadgeClass(destination: string): string {
     return getSourceBadgeClass(destination);
+  }
+
+  function isLogProcessing(log: TrafficLog): boolean {
+    if (log.action !== "received" || !log.conversationId) return false;
+    return !logs.some(
+      (l) =>
+        l.conversationId === log.conversationId &&
+        new Date(l.timestamp) > new Date(log.timestamp) &&
+        (l.action === "dify_reply" || l.action === "handoff" || l.action === "error")
+    );
   }
   return (
     <main className="shell">
@@ -663,6 +679,19 @@ Details: ${log.details || "None"}`;
           background: rgba(239, 68, 68, 0.1);
           color: #f87171;
           border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .spinner-loading {
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          border: 2px solid rgba(255, 255, 255, 0.2);
+          border-top-color: var(--accent);
+          border-radius: 50%;
+          animation: spin-loading 0.8s linear infinite;
+          vertical-align: middle;
+        }
+        @keyframes spin-loading {
+          to { transform: rotate(360deg); }
         }
         .direction-tag {
           font-size: 0.75rem;
@@ -1169,6 +1198,9 @@ Details: ${log.details || "None"}`;
                     <th>Message</th>
                     <th>Action</th>
                     <th>Latency</th>
+                    <th>Model</th>
+                    <th>Tokens</th>
+                    <th>Cost</th>
                     <th>Details</th>
                   </tr>
                 </thead>
@@ -1234,6 +1266,31 @@ Details: ${log.details || "None"}`;
                       </td>
                       <td style={{ color: log.latencyMs ? "var(--accent-2)" : "var(--muted)", fontWeight: log.latencyMs ? 600 : "normal" }}>
                         {log.latencyMs ? `${(log.latencyMs / 1000).toFixed(2)}s` : "-"}
+                      </td>
+                      <td style={{ color: log.model ? "var(--text)" : "var(--muted)", fontStyle: log.model ? "normal" : "italic" }}>
+                        {isLogProcessing(log) ? (
+                          <span className="spinner-loading" title="Thinking..." />
+                        ) : (
+                          log.model || "-"
+                        )}
+                      </td>
+                      <td style={{ fontWeight: log.tokens ? 600 : "normal" }}>
+                        {isLogProcessing(log) ? (
+                          <span className="spinner-loading" title="Thinking..." />
+                        ) : log.tokens !== undefined ? (
+                          log.tokens
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td style={{ color: log.cost !== undefined ? "#22c55e" : "var(--muted)", fontWeight: log.cost !== undefined ? 600 : "normal" }}>
+                        {isLogProcessing(log) ? (
+                          <span className="spinner-loading" title="Thinking..." />
+                        ) : log.cost !== undefined ? (
+                          `$${log.cost.toFixed(5)}`
+                        ) : (
+                          "-"
+                        )}
                       </td>
                       <td className="details-cell" title={log.details}>
                         {log.details}

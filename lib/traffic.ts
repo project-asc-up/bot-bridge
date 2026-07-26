@@ -8,6 +8,9 @@ export type TrafficLog = {
   action: "received" | "ignored" | "sent" | "dify_reply" | "handoff" | "error";
   details?: string;
   latencyMs?: number;
+  tokens?: number;
+  model?: string;
+  cost?: number;
 };
 
 const MAX_LOGS = 100;
