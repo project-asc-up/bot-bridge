@@ -145,8 +145,8 @@ async function processWebhook(payload: ChatwootWebhookEnvelope): Promise<void> {
       conversationId: resolved.conversationId,
       direction: "outgoing",
       content: resolved.content,
-      action: "ignored",
-      details: "Ignored outgoing message (not customer sent)"
+      action: "sent",
+      details: "Outgoing message sent from Chatwoot (ignored by bot)"
     });
     return;
   }

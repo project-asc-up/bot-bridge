@@ -9,7 +9,7 @@ type TrafficLog = {
   conversationId: number | null;
   direction: "incoming" | "outgoing" | "system";
   content: string;
-  action: "received" | "ignored" | "dify_reply" | "handoff" | "error";
+  action: "received" | "ignored" | "sent" | "dify_reply" | "handoff" | "error";
   details?: string;
   latencyMs?: number;
 };
@@ -151,6 +151,7 @@ export default function HomePage() {
     const errorText = `Error Event at ${formatTime(log.timestamp)}
 Direction: ${log.direction}
 Source: ${getSource(log)}
+Destination: ${getDestination(log)}
 Content: ${log.content}
 Details: ${log.details || "None"}`;
     void navigator.clipboard.writeText(errorText).then(() => {
@@ -169,8 +170,9 @@ Details: ${log.details || "None"}`;
       const actionMatch = log.action?.toLowerCase().includes(query);
       const directionMatch = log.direction?.toLowerCase().includes(query);
       const sourceMatch = getSource(log).toLowerCase().includes(query);
+      const destinationMatch = getDestination(log).toLowerCase().includes(query);
       const convoMatch = log.conversationId?.toString().includes(query);
-      if (!contentMatch && !detailsMatch && !actionMatch && !directionMatch && !sourceMatch && !convoMatch) {
+      if (!contentMatch && !detailsMatch && !actionMatch && !directionMatch && !sourceMatch && !destinationMatch && !convoMatch) {
         return false;
       }
     }
@@ -227,6 +229,8 @@ Details: ${log.details || "None"}`;
         return "badge badge-received";
       case "ignored":
         return "badge badge-ignored";
+      case "sent":
+        return "badge badge-sent";
       case "dify_reply":
         return "badge badge-dify_reply";
       case "handoff":
@@ -268,6 +272,32 @@ Details: ${log.details || "None"}`;
       default:
         return "badge badge-source-bridge";
     }
+  }
+
+  function getDestination(log: TrafficLog): string {
+    if (log.direction === "incoming") {
+      if (log.action === "received") {
+        return "Dify";
+      }
+      return "Bridge";
+    }
+    if (log.direction === "outgoing") {
+      if (log.action === "dify_reply") {
+        return "Chatwoot";
+      }
+      return "Evolution (Whatsapp)";
+    }
+    if (log.direction === "system") {
+      if (log.action === "handoff" || log.action === "error") {
+        return "Chatwoot";
+      }
+      return "Bridge";
+    }
+    return "System";
+  }
+
+  function getDestinationBadgeClass(destination: string): string {
+    return getSourceBadgeClass(destination);
   }
   return (
     <main className="shell">
@@ -613,6 +643,11 @@ Details: ${log.details || "None"}`;
           background: rgba(148, 163, 184, 0.08);
           color: var(--muted);
           border: 1px solid rgba(148, 163, 184, 0.15);
+        }
+        .badge-sent {
+          background: rgba(34, 197, 94, 0.1);
+          color: #4ade80;
+          border: 1px solid rgba(34, 197, 94, 0.2);
         }
         .badge-dify_reply {
           background: rgba(94, 234, 212, 0.1);
@@ -1038,6 +1073,7 @@ Details: ${log.details || "None"}`;
                 <option value="all">All Actions</option>
                 <option value="received">received</option>
                 <option value="ignored">ignored</option>
+                <option value="sent">sent</option>
                 <option value="dify_reply">dify_reply</option>
                 <option value="handoff">handoff</option>
                 <option value="error">error</option>
@@ -1129,8 +1165,10 @@ Details: ${log.details || "None"}`;
                     <th>Conv ID</th>
                     <th>Source</th>
                     <th>Dir</th>
+                    <th>Destination</th>
                     <th>Message</th>
                     <th>Action</th>
+                    <th>Latency</th>
                     <th>Details</th>
                   </tr>
                 </thead>
@@ -1171,6 +1209,11 @@ Details: ${log.details || "None"}`;
                         </span>
                       </td>
                       <td>
+                        <span className={getDestinationBadgeClass(getDestination(log))}>
+                          {getDestination(log)}
+                        </span>
+                      </td>
+                      <td>
                         <div className="msg-cell" title={log.content}>
                           {log.content}
                         </div>
@@ -1188,6 +1231,9 @@ Details: ${log.details || "None"}`;
                             </button>
                           )}
                         </div>
+                      </td>
+                      <td style={{ color: log.latencyMs ? "var(--accent-2)" : "var(--muted)", fontWeight: log.latencyMs ? 600 : "normal" }}>
+                        {log.latencyMs ? `${(log.latencyMs / 1000).toFixed(2)}s` : "-"}
                       </td>
                       <td className="details-cell" title={log.details}>
                         {log.details}

@@ -5,7 +5,7 @@ export type TrafficLog = {
   conversationId: number | null;
   direction: "incoming" | "outgoing" | "system";
   content: string;
-  action: "received" | "ignored" | "dify_reply" | "handoff" | "error";
+  action: "received" | "ignored" | "sent" | "dify_reply" | "handoff" | "error";
   details?: string;
   latencyMs?: number;
 };
