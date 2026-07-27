@@ -1,11 +1,13 @@
+import { prisma } from "./db";
+
 export type TrafficLog = {
   id: string;
   timestamp: string;
   accountId: number | null;
   conversationId: number | null;
   direction: "incoming" | "outgoing" | "system";
-  content: string;
   action: "received" | "ignored" | "sent" | "dify_reply" | "handoff" | "error";
+  content: string;
   details?: string;
   latencyMs?: number;
   tokens?: number;
@@ -13,7 +15,7 @@ export type TrafficLog = {
   cost?: number;
 };
 
-const MAX_LOGS = 100;
+const MAX_FALLBACK_LOGS = 100;
 
 // Use globalRef to prevent memory resets during Next.js Hot Module Replacement (HMR) in dev mode
 const globalRef = globalThis as unknown as { trafficLogs?: TrafficLog[] };
@@ -32,7 +34,28 @@ export function addTrafficLog(log: Omit<TrafficLog, "id" | "timestamp">): void {
 
   trafficLogs.unshift(newLog);
 
-  if (trafficLogs.length > MAX_LOGS) {
+  if (trafficLogs.length > MAX_FALLBACK_LOGS) {
     trafficLogs.pop();
+  }
+
+  if (prisma) {
+    prisma.trafficLog
+      .create({
+        data: {
+          accountId: log.accountId,
+          conversationId: log.conversationId,
+          direction: log.direction,
+          action: log.action,
+          content: log.content,
+          details: log.details,
+          latencyMs: log.latencyMs,
+          tokens: log.tokens,
+          model: log.model,
+          cost: log.cost,
+        },
+      })
+      .catch((err) => {
+        console.error("Failed to persist traffic log to DB:", err);
+      });
   }
 }

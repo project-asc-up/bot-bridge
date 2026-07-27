@@ -30,12 +30,45 @@ type SystemHealth = {
   chatwoot: HealthStatus;
 };
 
+type PaginationInfo = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+};
+
+type ApiStats = {
+  total: number;
+  replies: number;
+  handoffs: number;
+  ignored: number;
+  errors: number;
+};
+
 export default function HomePage() {
   const [logs, setLogs] = useState<TrafficLog[]>([]);
   const [isPolling, setIsPolling] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<number | null>(null);
+
+  // Pagination & Date Filter States
+  const [page, setPage] = useState<number>(1);
+  const limit = 20;
+  const [paginationInfo, setPaginationInfo] = useState<PaginationInfo>({
+    total: 0,
+    page: 1,
+    limit: 20,
+    totalPages: 1,
+    hasNextPage: false,
+    hasPrevPage: false,
+  });
+
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [apiStats, setApiStats] = useState<ApiStats | null>(null);
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -57,13 +90,37 @@ export default function HomePage() {
 
     async function fetchTraffic() {
       try {
-        const response = await fetch("/api/traffic");
+        const params = new URLSearchParams();
+        params.set("page", page.toString());
+        params.set("limit", limit.toString());
+        if (startDate) params.set("startDate", startDate);
+        if (endDate) params.set("endDate", endDate);
+        if (filterAction !== "all") params.set("action", filterAction);
+        if (filterDirection !== "all") params.set("direction", filterDirection);
+        if (filterConvoId !== "all") params.set("conversationId", filterConvoId);
+        if (searchQuery.trim() !== "") params.set("search", searchQuery.trim());
+
+        const response = await fetch(`/api/traffic?${params.toString()}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        const data = (await response.json()) as TrafficLog[];
+        const data = await response.json();
         if (active) {
-          setLogs(data);
+          if (Array.isArray(data)) {
+            setLogs(data);
+            setPaginationInfo({
+              total: data.length,
+              page: 1,
+              limit: 20,
+              totalPages: 1,
+              hasNextPage: false,
+              hasPrevPage: false,
+            });
+          } else if (data && data.logs) {
+            setLogs(data.logs);
+            if (data.pagination) setPaginationInfo(data.pagination);
+            if (data.stats) setApiStats(data.stats);
+          }
           setError(null);
         }
       } catch (err) {
@@ -100,7 +157,7 @@ export default function HomePage() {
       }
     }, 2000);
 
-    // Set up health probe checking (longer interval to prevent overloading)
+    // Set up health probe checking
     const healthInterval = setInterval(() => {
       void fetchHealth();
     }, 10000);
@@ -110,10 +167,10 @@ export default function HomePage() {
       clearInterval(trafficInterval);
       clearInterval(healthInterval);
     };
-  }, [isPolling]);
+  }, [isPolling, page, startDate, endDate, filterAction, filterDirection, filterConvoId, searchQuery]);
 
-  // Compute Stats
-  const stats = logs.reduce(
+  // Compute or Use API Stats
+  const stats = apiStats || logs.reduce(
     (acc, log) => {
       acc.total++;
       if (log.action === "dify_reply") acc.replies++;
@@ -122,7 +179,7 @@ export default function HomePage() {
       if (log.action === "error") acc.errors++;
       return acc;
     },
-    { total: 0, replies: 0, handoffs: 0, ignored: 0, errors: 0 }
+    { total: paginationInfo.total || logs.length, replies: 0, handoffs: 0, ignored: 0, errors: 0 }
   );
 
   // Compute Latency
@@ -136,7 +193,7 @@ export default function HomePage() {
         ).toFixed(2)
       : "0.00";
 
-  // Compute Unique Chats count (from original logs)
+  // Compute Unique Chats count (from current page/logs)
   const activeChats = Array.from(
     new Set(
       logs
@@ -202,57 +259,17 @@ Details: ${log.details || "None"}`;
     });
   };
 
-  // Filtered Logs
+  // Filtered Logs for client-side toggles (source, chats only, latency only)
   const filteredLogs = logs.filter((log) => {
-    // Search query matches content, details, action, direction, source, convo ID
-    if (searchQuery.trim() !== "") {
-      const query = searchQuery.toLowerCase();
-      const contentMatch = log.content?.toLowerCase().includes(query);
-      const detailsMatch = log.details?.toLowerCase().includes(query);
-      const actionMatch = log.action?.toLowerCase().includes(query);
-      const directionMatch = log.direction?.toLowerCase().includes(query);
-      const sourceMatch = getSource(log).toLowerCase().includes(query);
-      const destinationMatch = getDestination(log).toLowerCase().includes(query);
-      const convoMatch = log.conversationId?.toString().includes(query);
-      if (!contentMatch && !detailsMatch && !actionMatch && !directionMatch && !sourceMatch && !destinationMatch && !convoMatch) {
-        return false;
-      }
-    }
-
-    // Action filter
-    if (filterAction !== "all" && log.action !== filterAction) {
-      return false;
-    }
-
-    // Source filter
     if (filterSource !== "all" && getSource(log) !== filterSource) {
       return false;
     }
-
-    // Conversation ID filter
-    if (filterConvoId !== "all") {
-      if (filterConvoId === "system") {
-        if (log.conversationId !== null) return false;
-      } else {
-        if (log.conversationId?.toString() !== filterConvoId) return false;
-      }
-    }
-
-    // Direction filter
-    if (filterDirection !== "all" && log.direction !== filterDirection) {
-      return false;
-    }
-
-    // Chats only filter
     if (filterChatsOnly && log.conversationId === null) {
       return false;
     }
-
-    // Latency only filter
     if (filterLatencyOnly && typeof log.latencyMs !== "number") {
       return false;
     }
-
     return true;
   });
 
@@ -342,16 +359,6 @@ Details: ${log.details || "None"}`;
     return getSourceBadgeClass(destination);
   }
 
-  function isLogProcessing(log: TrafficLog): boolean {
-    if (log.action !== "received" || !log.conversationId) return false;
-    return !logs.some(
-      (l) =>
-        l.conversationId === log.conversationId &&
-        new Date(l.timestamp) > new Date(log.timestamp) &&
-        (l.action === "dify_reply" || l.action === "handoff" || l.action === "error")
-    );
-  }
-
   const handleDownloadLogs = () => {
     const content = filteredLogs
       .map((log) => {
@@ -390,6 +397,20 @@ Details: ${log.details || "None"}`;
     setSelectedCellLog(log);
     setSelectedCellField({ label, value });
   };
+
+  const resetAllFilters = () => {
+    setSearchQuery("");
+    setFilterAction("all");
+    setFilterSource("all");
+    setFilterConvoId("all");
+    setFilterDirection("all");
+    setFilterChatsOnly(false);
+    setFilterLatencyOnly(false);
+    setStartDate("");
+    setEndDate("");
+    setPage(1);
+  };
+
   return (
     <main className="shell">
       <style dangerouslySetInnerHTML={{ __html: `
@@ -448,51 +469,8 @@ Details: ${log.details || "None"}`;
           box-shadow: 0 0 8px #ef4444;
         }
         .status-detail {
-          font-size: 0.78rem;
+          font-size: 0.8rem;
           color: var(--muted);
-          font-family: monospace;
-          word-break: break-all;
-        }
-        .status-error-msg {
-          font-size: 0.75rem;
-          color: #f87171;
-          background: rgba(239, 68, 68, 0.05);
-          padding: 6px 10px;
-          border-radius: 8px;
-          margin-top: 4px;
-          border: 1px solid rgba(239, 68, 68, 0.15);
-        }
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-          gap: 16px;
-          margin-top: 24px;
-        }
-        .stat-card {
-          padding: 20px;
-          border-radius: 20px;
-          background: var(--bg-soft);
-          border: 1px solid var(--card-border);
-          text-align: center;
-          transition: transform 0.2s ease, border-color 0.2s ease;
-        }
-        .stat-card:hover {
-          transform: translateY(-2px);
-          border-color: rgba(94, 234, 212, 0.3);
-        }
-        .stat-value {
-          font-size: 2rem;
-          font-weight: 800;
-          color: var(--text);
-          margin-top: 6px;
-          line-height: 1;
-        }
-        .stat-label {
-          font-size: 0.72rem;
-          color: var(--muted);
-          text-transform: uppercase;
-          letter-spacing: 0.12em;
-          font-weight: 600;
         }
         .dashboard-layout {
           display: flex;
@@ -653,12 +631,6 @@ Details: ${log.details || "None"}`;
           border-bottom: 1px solid var(--card-border);
           padding-bottom: 12px;
         }
-        .monitor-title {
-          font-size: 1.25rem;
-          margin: 0;
-          font-weight: 700;
-          letter-spacing: -0.02em;
-        }
         .pulse-indicator {
           display: inline-flex;
           align-items: center;
@@ -754,19 +726,6 @@ Details: ${log.details || "None"}`;
           background: rgba(239, 68, 68, 0.1);
           color: #f87171;
           border: 1px solid rgba(239, 68, 68, 0.2);
-        }
-        .spinner-loading {
-          display: inline-block;
-          width: 12px;
-          height: 12px;
-          border: 2px solid rgba(255, 255, 255, 0.2);
-          border-top-color: var(--accent);
-          border-radius: 50%;
-          animation: spin-loading 0.8s linear infinite;
-          vertical-align: middle;
-        }
-        @keyframes spin-loading {
-          to { transform: rotate(360deg); }
         }
         .direction-tag {
           font-size: 0.75rem;
@@ -874,7 +833,7 @@ Details: ${log.details || "None"}`;
         }
         .filter-bar {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
           gap: 12px;
           margin-top: 16px;
           margin-bottom: 8px;
@@ -943,6 +902,25 @@ Details: ${log.details || "None"}`;
         }
         .clickable-cell:hover {
           background-color: rgba(20, 184, 166, 0.08) !important;
+        }
+        .pagination-bar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 16px;
+          background: rgba(11, 24, 39, 0.4);
+          border: 1px solid var(--card-border);
+          border-radius: 12px;
+          margin: 16px 0;
+        }
+        .pagination-info {
+          font-size: 0.85rem;
+          color: var(--muted);
+        }
+        .pagination-controls {
+          display: flex;
+          align-items: center;
+          gap: 8px;
         }
         .modal-overlay {
           position: fixed;
@@ -1120,16 +1098,10 @@ Details: ${log.details || "None"}`;
       <div className="stats-grid">
         <div
           className={`stat-card stat-card-clickable ${
-            filterAction === "all" && !filterChatsOnly && !filterLatencyOnly ? "stat-card-active-all" : ""
+            filterAction === "all" && !filterChatsOnly && !filterLatencyOnly && !startDate && !endDate ? "stat-card-active-all" : ""
           }`}
           onClick={() => {
-            setFilterAction("all");
-            setFilterSource("all");
-            setFilterConvoId("all");
-            setFilterDirection("all");
-            setSearchQuery("");
-            setFilterChatsOnly(false);
-            setFilterLatencyOnly(false);
+            resetAllFilters();
           }}
         >
           <div className="stat-label">Total Events</div>
@@ -1147,6 +1119,7 @@ Details: ${log.details || "None"}`;
             setSearchQuery("");
             setFilterChatsOnly(false);
             setFilterLatencyOnly(false);
+            setPage(1);
           }}
         >
           <div className="stat-label">AI Replies</div>
@@ -1187,7 +1160,7 @@ Details: ${log.details || "None"}`;
             setFilterLatencyOnly(false);
           }}
         >
-          <div className="stat-label">Active Chats</div>
+          <div className="stat-label">Active Chats (Page)</div>
           <div className="stat-value" style={{ color: "#c084fc" }}>
             {activeChats}
           </div>
@@ -1204,6 +1177,7 @@ Details: ${log.details || "None"}`;
             setSearchQuery("");
             setFilterChatsOnly(false);
             setFilterLatencyOnly(false);
+            setPage(1);
           }}
         >
           <div className="stat-label">Handoffs</div>
@@ -1223,6 +1197,7 @@ Details: ${log.details || "None"}`;
             setSearchQuery("");
             setFilterChatsOnly(false);
             setFilterLatencyOnly(false);
+            setPage(1);
           }}
         >
           <div className="stat-label">Errors</div>
@@ -1234,7 +1209,7 @@ Details: ${log.details || "None"}`;
 
       {/* Main Content Dashboard Layout */}
       <div className="dashboard-layout">
-        {/* Live Monitor Panel (Left side, maps to split panel if active chat is viewed) */}
+        {/* Live Monitor Panel */}
         <section className={`panel ${selectedConversationId ? "panel-split" : ""}`}>
           <div className="monitor-header">
             <div className="pulse-indicator">
@@ -1272,7 +1247,36 @@ Details: ${log.details || "None"}`;
                 className="filter-input"
                 placeholder="Search msg/details..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+
+            <div className="filter-group">
+              <span className="filter-label">From Date</span>
+              <input
+                type="date"
+                className="filter-input"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+
+            <div className="filter-group">
+              <span className="filter-label">To Date</span>
+              <input
+                type="date"
+                className="filter-input"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPage(1);
+                }}
               />
             </div>
             
@@ -1284,6 +1288,7 @@ Details: ${log.details || "None"}`;
                 onChange={(e) => {
                   setFilterConvoId(e.target.value);
                   setFilterChatsOnly(false);
+                  setPage(1);
                 }}
               >
                 <option value="all">All Conversations</option>
@@ -1305,6 +1310,7 @@ Details: ${log.details || "None"}`;
                   setFilterAction(e.target.value);
                   setFilterChatsOnly(false);
                   setFilterLatencyOnly(false);
+                  setPage(1);
                 }}
               >
                 <option value="all">All Actions</option>
@@ -1337,7 +1343,10 @@ Details: ${log.details || "None"}`;
               <select
                 className="filter-select"
                 value={filterDirection}
-                onChange={(e) => setFilterDirection(e.target.value)}
+                onChange={(e) => {
+                  setFilterDirection(e.target.value);
+                  setPage(1);
+                }}
               >
                 <option value="all">All Directions</option>
                 <option value="incoming">incoming</option>
@@ -1346,22 +1355,42 @@ Details: ${log.details || "None"}`;
               </select>
             </div>
 
-            {(searchQuery || filterAction !== "all" || filterSource !== "all" || filterConvoId !== "all" || filterDirection !== "all" || filterChatsOnly || filterLatencyOnly) && (
+            {(searchQuery || filterAction !== "all" || filterSource !== "all" || filterConvoId !== "all" || filterDirection !== "all" || filterChatsOnly || filterLatencyOnly || startDate || endDate) && (
               <button
                 className="btn btn-clear-filters"
-                onClick={() => {
-                  setSearchQuery("");
-                  setFilterAction("all");
-                  setFilterSource("all");
-                  setFilterConvoId("all");
-                  setFilterDirection("all");
-                  setFilterChatsOnly(false);
-                  setFilterLatencyOnly(false);
-                }}
+                onClick={resetAllFilters}
               >
                 Clear Filters
               </button>
             )}
+          </div>
+
+          {/* Top Pagination Bar */}
+          <div className="pagination-bar">
+            <div className="pagination-info">
+              Showing records <strong style={{ color: "var(--text)" }}>{paginationInfo.total > 0 ? (paginationInfo.page - 1) * paginationInfo.limit + 1 : 0}</strong> - <strong style={{ color: "var(--text)" }}>{Math.min(paginationInfo.page * paginationInfo.limit, paginationInfo.total)}</strong> of <strong style={{ color: "var(--text)" }}>{paginationInfo.total}</strong> total
+            </div>
+            <div className="pagination-controls">
+              <button
+                className="btn"
+                disabled={!paginationInfo.hasPrevPage}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                style={{ opacity: paginationInfo.hasPrevPage ? 1 : 0.4, cursor: paginationInfo.hasPrevPage ? "pointer" : "not-allowed" }}
+              >
+                ← Previous
+              </button>
+              <span style={{ fontSize: "0.85rem", color: "var(--text)", padding: "0 8px" }}>
+                Page <strong>{paginationInfo.page}</strong> of <strong>{paginationInfo.totalPages}</strong>
+              </span>
+              <button
+                className="btn"
+                disabled={!paginationInfo.hasNextPage}
+                onClick={() => setPage((p) => Math.min(paginationInfo.totalPages, p + 1))}
+                style={{ opacity: paginationInfo.hasNextPage ? 1 : 0.4, cursor: paginationInfo.hasNextPage ? "pointer" : "not-allowed" }}
+              >
+                Next →
+              </button>
+            </div>
           </div>
 
           <div className="traffic-table-container">
@@ -1381,15 +1410,7 @@ Details: ${log.details || "None"}`;
                 <button
                   className="btn"
                   style={{ marginTop: "12px" }}
-                  onClick={() => {
-                    setSearchQuery("");
-                    setFilterAction("all");
-                    setFilterSource("all");
-                    setFilterConvoId("all");
-                    setFilterDirection("all");
-                    setFilterChatsOnly(false);
-                    setFilterLatencyOnly(false);
-                  }}
+                  onClick={resetAllFilters}
                 >
                   Reset Filters
                 </button>
@@ -1517,9 +1538,39 @@ Details: ${log.details || "None"}`;
               </table>
             )}
           </div>
+
+          {/* Bottom Pagination Bar */}
+          {logs.length > 0 && (
+            <div className="pagination-bar">
+              <div className="pagination-info">
+                Showing records <strong style={{ color: "var(--text)" }}>{paginationInfo.total > 0 ? (paginationInfo.page - 1) * paginationInfo.limit + 1 : 0}</strong> - <strong style={{ color: "var(--text)" }}>{Math.min(paginationInfo.page * paginationInfo.limit, paginationInfo.total)}</strong> of <strong style={{ color: "var(--text)" }}>{paginationInfo.total}</strong> total
+              </div>
+              <div className="pagination-controls">
+                <button
+                  className="btn"
+                  disabled={!paginationInfo.hasPrevPage}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  style={{ opacity: paginationInfo.hasPrevPage ? 1 : 0.4, cursor: paginationInfo.hasPrevPage ? "pointer" : "not-allowed" }}
+                >
+                  ← Previous
+                </button>
+                <span style={{ fontSize: "0.85rem", color: "var(--text)", padding: "0 8px" }}>
+                  Page <strong>{paginationInfo.page}</strong> of <strong>{paginationInfo.totalPages}</strong>
+                </span>
+                <button
+                  className="btn"
+                  disabled={!paginationInfo.hasNextPage}
+                  onClick={() => setPage((p) => Math.min(paginationInfo.totalPages, p + 1))}
+                  style={{ opacity: paginationInfo.hasNextPage ? 1 : 0.4, cursor: paginationInfo.hasNextPage ? "pointer" : "not-allowed" }}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
-        {/* Chat Thread Viewer Panel (Right side, appears when a chat ID is clicked) */}
+        {/* Chat Thread Viewer Panel */}
         {selectedConversationId && (
           <section className="panel chat-viewer-panel">
             <div className="chat-header">
@@ -1534,13 +1585,13 @@ Details: ${log.details || "None"}`;
             <div className="chat-body-scroll">
               {logs.filter((log) => log.conversationId === selectedConversationId).length === 0 ? (
                 <div className="chat-empty">
-                  <p>No messages found in history for this chat.</p>
+                  <p>No messages found in current view for this chat.</p>
                 </div>
               ) : (
                 logs
                   .filter((log) => log.conversationId === selectedConversationId)
                   .slice()
-                  .reverse() // Sort chronologically (oldest message first)
+                  .reverse()
                   .map((log) => {
                     const isIncoming = log.direction === "incoming";
                     const isSystem = log.direction === "system";

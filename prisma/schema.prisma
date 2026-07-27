@@ -1,0 +1,30 @@
+// Prisma schema for Bot Bridge Traffic Logging (PostgreSQL)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model TrafficLog {
+  id             String   @id @default(cuid())
+  timestamp      DateTime @default(now())
+  accountId      Int?
+  conversationId Int?
+  direction      String
+  action         String
+  content        String   @db.Text
+  details        String?  @db.Text
+  latencyMs      Int?
+  tokens         Int?
+  model          String?
+  cost           Float?
+
+  @@index([timestamp(sort: Desc)])
+  @@index([action])
+  @@index([conversationId])
+  @@index([direction])
+}
