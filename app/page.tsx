@@ -116,10 +116,12 @@ export default function HomePage() {
               hasNextPage: false,
               hasPrevPage: false,
             });
-          } else if (data && data.logs) {
+          } else if (data && Array.isArray(data.logs)) {
             setLogs(data.logs);
             if (data.pagination) setPaginationInfo(data.pagination);
             if (data.stats) setApiStats(data.stats);
+          } else {
+            setLogs([]);
           }
           setError(null);
         }
@@ -169,8 +171,11 @@ export default function HomePage() {
     };
   }, [isPolling, page, startDate, endDate, filterAction, filterDirection, filterConvoId, searchQuery]);
 
+  // Safe logs array guard to prevent any client-side crash
+  const safeLogs = Array.isArray(logs) ? logs : [];
+
   // Compute or Use API Stats
-  const stats = apiStats || logs.reduce(
+  const stats = apiStats || safeLogs.reduce(
     (acc, log) => {
       acc.total++;
       if (log.action === "dify_reply") acc.replies++;
@@ -179,11 +184,11 @@ export default function HomePage() {
       if (log.action === "error") acc.errors++;
       return acc;
     },
-    { total: paginationInfo.total || logs.length, replies: 0, handoffs: 0, ignored: 0, errors: 0 }
+    { total: paginationInfo.total || safeLogs.length, replies: 0, handoffs: 0, ignored: 0, errors: 0 }
   );
 
   // Compute Latency
-  const latencyLogs = logs.filter((log) => typeof log.latencyMs === "number");
+  const latencyLogs = safeLogs.filter((log) => typeof log.latencyMs === "number");
   const avgLatency =
     latencyLogs.length > 0
       ? (
@@ -196,7 +201,7 @@ export default function HomePage() {
   // Compute Unique Chats count (from current page/logs)
   const activeChats = Array.from(
     new Set(
-      logs
+      safeLogs
         .map((log) => log.conversationId)
         .filter((id): id is number => typeof id === "number")
     )
@@ -205,7 +210,7 @@ export default function HomePage() {
   // Compute unique conversation IDs from logs
   const uniqueConvoIds = Array.from(
     new Set(
-      logs
+      safeLogs
         .map((log) => log.conversationId)
         .filter((id): id is number => typeof id === "number")
     )
@@ -260,7 +265,7 @@ Details: ${log.details || "None"}`;
   };
 
   // Filtered Logs for client-side toggles (source, chats only, latency only)
-  const filteredLogs = logs.filter((log) => {
+  const filteredLogs = safeLogs.filter((log) => {
     if (filterSource !== "all" && getSource(log) !== filterSource) {
       return false;
     }
@@ -1394,7 +1399,7 @@ Details: ${log.details || "None"}`;
           </div>
 
           <div className="traffic-table-container">
-            {logs.length === 0 ? (
+            {safeLogs.length === 0 ? (
               <div className="empty-state">
                 <p>No traffic events logged yet.</p>
                 <p style={{ fontSize: "0.8rem", marginTop: "4px" }}>
@@ -1540,7 +1545,7 @@ Details: ${log.details || "None"}`;
           </div>
 
           {/* Bottom Pagination Bar */}
-          {logs.length > 0 && (
+          {safeLogs.length > 0 && (
             <div className="pagination-bar">
               <div className="pagination-info">
                 Showing records <strong style={{ color: "var(--text)" }}>{paginationInfo.total > 0 ? (paginationInfo.page - 1) * paginationInfo.limit + 1 : 0}</strong> - <strong style={{ color: "var(--text)" }}>{Math.min(paginationInfo.page * paginationInfo.limit, paginationInfo.total)}</strong> of <strong style={{ color: "var(--text)" }}>{paginationInfo.total}</strong> total
@@ -1583,12 +1588,12 @@ Details: ${log.details || "None"}`;
               </button>
             </div>
             <div className="chat-body-scroll">
-              {logs.filter((log) => log.conversationId === selectedConversationId).length === 0 ? (
+              {safeLogs.filter((log) => log.conversationId === selectedConversationId).length === 0 ? (
                 <div className="chat-empty">
                   <p>No messages found in current view for this chat.</p>
                 </div>
               ) : (
-                logs
+                safeLogs
                   .filter((log) => log.conversationId === selectedConversationId)
                   .slice()
                   .reverse()
