@@ -46,6 +46,11 @@ export default function HomePage() {
   const [filterChatsOnly, setFilterChatsOnly] = useState<boolean>(false);
   const [filterLatencyOnly, setFilterLatencyOnly] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  
+  // Inspection Modal States
+  const [selectedCellLog, setSelectedCellLog] = useState<TrafficLog | null>(null);
+  const [selectedCellField, setSelectedCellField] = useState<{ label: string; value: string } | null>(null);
+  const [copiedFieldText, setCopiedFieldText] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -149,6 +154,37 @@ export default function HomePage() {
     )
   ).sort((a, b) => a - b);
 
+  // Robust clipboard copy utility with fallback for non-secure HTTP / generic envs
+  const copyToClipboard = (text: string): Promise<void> => {
+    if (typeof window !== "undefined") {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise((resolve, reject) => {
+        try {
+          const textArea = document.createElement("textarea");
+          textArea.value = text;
+          textArea.style.top = "0";
+          textArea.style.left = "0";
+          textArea.style.position = "fixed";
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          const successful = document.execCommand("copy");
+          document.body.removeChild(textArea);
+          if (successful) {
+            resolve();
+          } else {
+            reject(new Error("Fallback copy failed"));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+    return Promise.reject(new Error("Window object not available"));
+  };
+
   // Compute Copy Action Handler
   const handleCopyError = (log: TrafficLog) => {
     const errorText = `Error Event at ${formatTime(log.timestamp)}
@@ -160,7 +196,7 @@ Tokens: ${log.tokens || "N/A"}
 Cost: ${log.cost !== undefined ? `$${log.cost.toFixed(6)}` : "N/A"}
 Content: ${log.content}
 Details: ${log.details || "None"}`;
-    void navigator.clipboard.writeText(errorText).then(() => {
+    void copyToClipboard(errorText).then(() => {
       setCopiedId(log.id);
       setTimeout(() => setCopiedId(null), 2000);
     });
@@ -315,6 +351,45 @@ Details: ${log.details || "None"}`;
         (l.action === "dify_reply" || l.action === "handoff" || l.action === "error")
     );
   }
+
+  const handleDownloadLogs = () => {
+    const content = filteredLogs
+      .map((log) => {
+        return [
+          `Timestamp: ${log.timestamp}`,
+          `ID: ${log.id}`,
+          `Conversation ID: ${log.conversationId ? `#${log.conversationId}` : "System"}`,
+          `Direction: ${log.direction}`,
+          `Source: ${getSource(log)}`,
+          `Destination: ${getDestination(log)}`,
+          `Action: ${log.action}`,
+          log.latencyMs ? `Latency: ${(log.latencyMs / 1000).toFixed(2)}s` : null,
+          log.model ? `Model: ${log.model}` : null,
+          log.tokens !== undefined ? `Tokens: ${log.tokens}` : null,
+          log.cost !== undefined ? `Cost: $${log.cost.toFixed(6)}` : null,
+          `Details: ${log.details || "None"}`,
+          `Content: ${log.content || ""}`
+        ]
+          .filter(Boolean)
+          .join("\n");
+      })
+      .join("\n\n" + "=".repeat(50) + "\n\n");
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `bot-bridge-logs-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCellClick = (log: TrafficLog, label: string, value: string) => {
+    setSelectedCellLog(log);
+    setSelectedCellField({ label, value });
+  };
   return (
     <main className="shell">
       <style dangerouslySetInnerHTML={{ __html: `
@@ -862,6 +937,136 @@ Details: ${log.details || "None"}`;
           border-color: #f87171;
           color: #ffffff;
         }
+        .clickable-cell {
+          cursor: pointer;
+          transition: background-color 0.2s ease;
+        }
+        .clickable-cell:hover {
+          background-color: rgba(20, 184, 166, 0.08) !important;
+        }
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(9, 9, 11, 0.85);
+          backdrop-filter: blur(12px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          animation: fadeIn 0.2s ease-out;
+        }
+        .modal-content {
+          background: var(--bg-soft);
+          border: 1px solid var(--card-border);
+          border-radius: 16px;
+          width: min(650px, calc(100vw - 32px));
+          max-height: calc(100vh - 64px);
+          display: flex;
+          flex-direction: column;
+          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
+          animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes scaleUp {
+          from { transform: scale(0.95); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        .modal-header {
+          padding: 16px 20px;
+          border-bottom: 1px solid var(--card-border);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .modal-title {
+          margin: 0;
+          font-size: 1.1rem;
+          font-weight: 700;
+          color: var(--text);
+        }
+        .modal-close-btn {
+          background: transparent;
+          border: none;
+          color: var(--muted);
+          font-size: 1.5rem;
+          cursor: pointer;
+          line-height: 1;
+          padding: 4px;
+          transition: color 0.2s;
+        }
+        .modal-close-btn:hover {
+          color: var(--text);
+        }
+        .modal-body {
+          padding: 20px;
+          overflow-y: auto;
+          flex: 1;
+        }
+        .modal-section-label {
+          font-size: 0.72rem;
+          color: var(--muted);
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          font-weight: 700;
+          margin-bottom: 8px;
+        }
+        .modal-val-container {
+          background: var(--bg);
+          border: 1px solid var(--card-border);
+          border-radius: 12px;
+          padding: 16px;
+          font-size: 0.95rem;
+          color: var(--text);
+          font-family: monospace;
+          white-space: pre-wrap;
+          word-break: break-all;
+          max-height: 250px;
+          overflow-y: auto;
+          line-height: 1.5;
+        }
+        .modal-details-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 12px;
+          background: var(--bg);
+          border: 1px solid var(--card-border);
+          border-radius: 12px;
+          padding: 16px;
+          margin-top: 8px;
+        }
+        .modal-details-item {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.82rem;
+          padding-bottom: 6px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+        .modal-details-item:last-child {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+        .modal-details-key {
+          color: var(--muted);
+          font-weight: 500;
+        }
+        .modal-details-val {
+          color: var(--text);
+          font-weight: 600;
+          font-family: monospace;
+        }
+        .modal-footer {
+          padding: 16px 20px;
+          border-top: 1px solid var(--card-border);
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+        }
       ` }} />
 
       <section className="hero">
@@ -1052,6 +1257,9 @@ Details: ${log.details || "None"}`;
               <button className="btn" onClick={() => { setLogs([]); setSelectedConversationId(null); }}>
                 Clear View
               </button>
+              <button className="btn" onClick={handleDownloadLogs} title="Download current filtered logs as a text file">
+                📥 Download Logs (.txt)
+              </button>
             </div>
           </div>
 
@@ -1198,16 +1406,19 @@ Details: ${log.details || "None"}`;
                     <th>Message</th>
                     <th>Action</th>
                     <th>Latency</th>
-                    <th>Model</th>
-                    <th>Tokens</th>
-                    <th>Cost</th>
                     <th>Details</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredLogs.map((log) => (
                     <tr key={log.id}>
-                      <td style={{ fontWeight: 600 }}>{formatTime(log.timestamp)}</td>
+                      <td 
+                        className="clickable-cell" 
+                        style={{ fontWeight: 600 }} 
+                        onClick={() => handleCellClick(log, "Time", formatTime(log.timestamp))}
+                      >
+                        {formatTime(log.timestamp)}
+                      </td>
                       <td>
                         {log.conversationId ? (
                           <button
@@ -1222,12 +1433,18 @@ Details: ${log.details || "None"}`;
                           <span style={{ color: "var(--muted)" }}>System</span>
                         )}
                       </td>
-                      <td>
+                      <td 
+                        className="clickable-cell" 
+                        onClick={() => handleCellClick(log, "Source", getSource(log))}
+                      >
                         <span className={getSourceBadgeClass(getSource(log))}>
                           {getSource(log)}
                         </span>
                       </td>
-                      <td>
+                      <td 
+                        className="clickable-cell" 
+                        onClick={() => handleCellClick(log, "Direction", log.direction)}
+                      >
                         <span
                           className={`direction-tag ${
                             log.direction === "incoming"
@@ -1240,18 +1457,34 @@ Details: ${log.details || "None"}`;
                           {log.direction}
                         </span>
                       </td>
-                      <td>
+                      <td 
+                        className="clickable-cell" 
+                        onClick={() => handleCellClick(log, "Destination", getDestination(log))}
+                      >
                         <span className={getDestinationBadgeClass(getDestination(log))}>
                           {getDestination(log)}
                         </span>
                       </td>
-                      <td>
+                      <td 
+                        className="clickable-cell" 
+                        onClick={() => handleCellClick(log, "Message Content", log.content)}
+                      >
                         <div className="msg-cell" title={log.content}>
                           {log.content}
                         </div>
                       </td>
-                      <td>
-                        <div style={{ display: "flex", alignItems: "center" }}>
+                      <td 
+                        className="clickable-cell" 
+                        onClick={() => handleCellClick(log, "Action", log.action)}
+                      >
+                        <div 
+                          style={{ display: "flex", alignItems: "center" }}
+                          onClick={(e) => {
+                            if ((e.target as HTMLElement).closest(".btn-copy-error")) {
+                              e.stopPropagation();
+                            }
+                          }}
+                        >
                           <span className={getBadgeClass(log.action)}>{log.action}</span>
                           {log.action === "error" && (
                             <button
@@ -1264,35 +1497,18 @@ Details: ${log.details || "None"}`;
                           )}
                         </div>
                       </td>
-                      <td style={{ color: log.latencyMs ? "var(--accent-2)" : "var(--muted)", fontWeight: log.latencyMs ? 600 : "normal" }}>
+                      <td 
+                        className="clickable-cell" 
+                        style={{ color: log.latencyMs ? "var(--accent-2)" : "var(--muted)", fontWeight: log.latencyMs ? 600 : "normal" }}
+                        onClick={() => handleCellClick(log, "Latency", log.latencyMs ? `${(log.latencyMs / 1000).toFixed(2)}s` : "-")}
+                      >
                         {log.latencyMs ? `${(log.latencyMs / 1000).toFixed(2)}s` : "-"}
                       </td>
-                      <td style={{ color: log.model ? "var(--text)" : "var(--muted)", fontStyle: log.model ? "normal" : "italic" }}>
-                        {isLogProcessing(log) ? (
-                          <span className="spinner-loading" title="Thinking..." />
-                        ) : (
-                          log.model || "-"
-                        )}
-                      </td>
-                      <td style={{ fontWeight: log.tokens ? 600 : "normal" }}>
-                        {isLogProcessing(log) ? (
-                          <span className="spinner-loading" title="Thinking..." />
-                        ) : log.tokens !== undefined ? (
-                          log.tokens
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                      <td style={{ color: log.cost !== undefined ? "#22c55e" : "var(--muted)", fontWeight: log.cost !== undefined ? 600 : "normal" }}>
-                        {isLogProcessing(log) ? (
-                          <span className="spinner-loading" title="Thinking..." />
-                        ) : log.cost !== undefined ? (
-                          `$${log.cost.toFixed(5)}`
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                      <td className="details-cell" title={log.details}>
+                      <td 
+                        className="clickable-cell details-cell" 
+                        title={log.details}
+                        onClick={() => handleCellClick(log, "Details", log.details || "None")}
+                      >
                         {log.details}
                       </td>
                     </tr>
@@ -1364,6 +1580,133 @@ Details: ${log.details || "None"}`;
           </section>
         )}
       </div>
+
+      {selectedCellLog && selectedCellField && (
+        <div className="modal-overlay" onClick={() => { setSelectedCellLog(null); setSelectedCellField(null); }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Cell Detail: {selectedCellField.label}</h3>
+              <button className="modal-close-btn" onClick={() => { setSelectedCellLog(null); setSelectedCellField(null); }}>
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="modal-section-label">Full Value:</div>
+              <div className="modal-val-container">
+                {selectedCellField.value}
+              </div>
+              
+              <div className="modal-section-label" style={{ marginTop: "20px" }}>Log Event Details:</div>
+              <div className="modal-details-grid">
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Timestamp</span>
+                  <span className="modal-details-val">{selectedCellLog.timestamp}</span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Formatted Time</span>
+                  <span className="modal-details-val">{formatTime(selectedCellLog.timestamp)}</span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Log ID</span>
+                  <span className="modal-details-val">{selectedCellLog.id}</span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Conversation</span>
+                  <span className="modal-details-val">
+                    {selectedCellLog.conversationId ? `#${selectedCellLog.conversationId}` : "System"}
+                  </span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Direction</span>
+                  <span className="modal-details-val">{selectedCellLog.direction}</span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Source</span>
+                  <span className="modal-details-val">{getSource(selectedCellLog)}</span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Destination</span>
+                  <span className="modal-details-val">{getDestination(selectedCellLog)}</span>
+                </div>
+                <div className="modal-details-item">
+                  <span className="modal-details-key">Action</span>
+                  <span className="modal-details-val">{selectedCellLog.action}</span>
+                </div>
+                {selectedCellLog.latencyMs && (
+                  <div className="modal-details-item">
+                    <span className="modal-details-key">Latency</span>
+                    <span className="modal-details-val">{(selectedCellLog.latencyMs / 1000).toFixed(2)}s</span>
+                  </div>
+                )}
+                {selectedCellLog.model && (
+                  <div className="modal-details-item">
+                    <span className="modal-details-key">Model</span>
+                    <span className="modal-details-val">{selectedCellLog.model}</span>
+                  </div>
+                )}
+                {selectedCellLog.tokens !== undefined && (
+                  <div className="modal-details-item">
+                    <span className="modal-details-key">Tokens</span>
+                    <span className="modal-details-val">{selectedCellLog.tokens}</span>
+                  </div>
+                )}
+                {selectedCellLog.cost !== undefined && (
+                  <div className="modal-details-item">
+                    <span className="modal-details-key">Cost</span>
+                    <span className="modal-details-val">${selectedCellLog.cost.toFixed(6)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn btn-active"
+                onClick={() => {
+                  copyToClipboard(selectedCellField.value).then(() => {
+                    setCopiedFieldText("cell");
+                    setTimeout(() => setCopiedFieldText(null), 2000);
+                  });
+                }}
+              >
+                {copiedFieldText === "cell" ? "✓ Copied Value!" : "📋 Copy Cell Value"}
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  const fullLogText = [
+                    `Timestamp: ${selectedCellLog.timestamp}`,
+                    `ID: ${selectedCellLog.id}`,
+                    `Conversation ID: ${selectedCellLog.conversationId ? `#${selectedCellLog.conversationId}` : "System"}`,
+                    `Direction: ${selectedCellLog.direction}`,
+                    `Source: ${getSource(selectedCellLog)}`,
+                    `Destination: ${getDestination(selectedCellLog)}`,
+                    `Action: ${selectedCellLog.action}`,
+                    selectedCellLog.latencyMs ? `Latency: ${(selectedCellLog.latencyMs / 1000).toFixed(2)}s` : null,
+                    selectedCellLog.model ? `Model: ${selectedCellLog.model}` : null,
+                    selectedCellLog.tokens !== undefined ? `Tokens: ${selectedCellLog.tokens}` : null,
+                    selectedCellLog.cost !== undefined ? `Cost: $${selectedCellLog.cost.toFixed(6)}` : null,
+                    `Details: ${selectedCellLog.details || "None"}`,
+                    `Content: ${selectedCellLog.content || ""}`
+                  ].filter(Boolean).join("\n");
+                  
+                  copyToClipboard(fullLogText).then(() => {
+                    setCopiedFieldText("log");
+                    setTimeout(() => setCopiedFieldText(null), 2000);
+                  });
+                }}
+              >
+                {copiedFieldText === "log" ? "✓ Copied Log!" : "📋 Copy Entire Log Event"}
+              </button>
+              <button
+                className="btn"
+                onClick={() => { setSelectedCellLog(null); setSelectedCellField(null); }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
