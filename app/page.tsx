@@ -477,6 +477,39 @@ Details: ${log.details || "None"}`;
           font-size: 0.8rem;
           color: var(--muted);
         }
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 16px;
+          margin-top: 24px;
+        }
+        .stat-card {
+          background: rgba(11, 24, 39, 0.4);
+          border: 1px solid var(--card-border);
+          border-radius: 16px;
+          padding: 16px 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          transition: all 0.2s ease;
+        }
+        .stat-card:hover {
+          transform: translateY(-2px);
+          border-color: rgba(148, 163, 184, 0.3);
+        }
+        .stat-label {
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: var(--muted);
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+        .stat-value {
+          font-size: 1.6rem;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+          color: var(--text);
+        }
         .dashboard-layout {
           display: flex;
           gap: 24px;
